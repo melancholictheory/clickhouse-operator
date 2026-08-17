@@ -266,6 +266,22 @@ func (rm *ResourceManager) ReconcileReplicaResources(
 		return &ctrlruntime.Result{RequeueAfter: RequeueProbePoll}, nil
 	}
 
+	// Disks may be appended after creation. A StatefulSet's volumeClaimTemplates are immutable, so
+	// the StatefulSet is recreated instead. Its PVCs are retained, and the recreated StatefulSet
+	// asks for the same PVC names, so existing disks are reused and only the new one is provisioned.
+	if added := addedVolumeClaimTemplates(input.Existing.STS, statefulSet); len(added) > 0 {
+		log.Info("recreating StatefulSet to attach added disks",
+			"statefulset", statefulSet.Name,
+			"disks", added,
+		)
+
+		if err := rm.Delete(ctx, input.Existing.STS, v1.EventActionReconciling); err != nil {
+			return nil, fmt.Errorf("recreate replica to attach disks %v: %w", added, err)
+		}
+
+		return &ctrlruntime.Result{RequeueAfter: RequeueProbePoll}, nil
+	}
+
 	statefulSet.Spec.VolumeClaimTemplates = input.Existing.STS.Spec.VolumeClaimTemplates
 
 	{
@@ -331,6 +347,29 @@ func (rm *ResourceManager) ReconcileReplicaResources(
 	}
 
 	return &ctrlruntime.Result{RequeueAfter: RequeueProbePoll}, nil
+}
+
+// addedVolumeClaimTemplates returns the names of the volumeClaimTemplates that desired declares and
+// existing does not yet have. Removals are rejected by the webhook, so only additions reach here.
+func addedVolumeClaimTemplates(existing, desired *appsv1.StatefulSet) []string {
+	if existing == nil || desired == nil {
+		return nil
+	}
+
+	present := make(map[string]struct{}, len(existing.Spec.VolumeClaimTemplates))
+	for _, vct := range existing.Spec.VolumeClaimTemplates {
+		present[vct.Name] = struct{}{}
+	}
+
+	var added []string
+
+	for _, vct := range desired.Spec.VolumeClaimTemplates {
+		if _, ok := present[vct.Name]; !ok {
+			added = append(added, vct.Name)
+		}
+	}
+
+	return added
 }
 
 func diffFilter(specFields []string) gcmp.Option {

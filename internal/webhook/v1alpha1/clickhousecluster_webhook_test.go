@@ -439,7 +439,7 @@ var _ = Describe("ClickHouseCluster Webhook", func() {
 			deferCleanup(cluster)
 		})
 
-		It("Should reject adding an additional disk after creation", func(ctx context.Context) {
+		It("Should allow adding an additional disk after creation", func(ctx context.Context) {
 			cluster := base("jbod-add")
 			cluster.Spec.AdditionalVolumeClaimTemplates = []chv1.PersistentVolumeClaimTemplate{disk("disk1", "1Gi")}
 			Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
@@ -448,9 +448,21 @@ var _ = Describe("ClickHouseCluster Webhook", func() {
 			Expect(k8sClient.Get(ctx, cluster.NamespacedName(), cluster)).To(Succeed())
 			cluster.Spec.AdditionalVolumeClaimTemplates = append(cluster.Spec.AdditionalVolumeClaimTemplates, disk("disk2", "1Gi"))
 
-			err := k8sClient.Update(ctx, cluster)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("cannot be added or removed"))
+			Expect(k8sClient.Update(ctx, cluster)).To(Succeed())
+
+			Expect(k8sClient.Get(ctx, cluster.NamespacedName(), cluster)).To(Succeed())
+			Expect(cluster.Spec.AdditionalVolumeClaimTemplates).To(HaveLen(2))
+		})
+
+		It("Should allow adding the first additional disk to a cluster that had none", func(ctx context.Context) {
+			cluster := base("jbod-add-first")
+			Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+			deferCleanup(cluster)
+
+			Expect(k8sClient.Get(ctx, cluster.NamespacedName(), cluster)).To(Succeed())
+			cluster.Spec.AdditionalVolumeClaimTemplates = []chv1.PersistentVolumeClaimTemplate{disk("disk1", "1Gi")}
+
+			Expect(k8sClient.Update(ctx, cluster)).To(Succeed())
 		})
 
 		It("Should reject removing an additional disk after creation", func(ctx context.Context) {
@@ -464,7 +476,21 @@ var _ = Describe("ClickHouseCluster Webhook", func() {
 
 			err := k8sClient.Update(ctx, cluster)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("cannot be added or removed"))
+			Expect(err.Error()).To(ContainSubstring("cannot be removed"))
+		})
+
+		It("Should reject swapping an additional disk for a new one", func(ctx context.Context) {
+			cluster := base("jbod-swap")
+			cluster.Spec.AdditionalVolumeClaimTemplates = []chv1.PersistentVolumeClaimTemplate{disk("disk1", "1Gi"), disk("disk2", "1Gi")}
+			Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+			deferCleanup(cluster)
+
+			Expect(k8sClient.Get(ctx, cluster.NamespacedName(), cluster)).To(Succeed())
+			cluster.Spec.AdditionalVolumeClaimTemplates = []chv1.PersistentVolumeClaimTemplate{disk("disk1", "1Gi"), disk("disk3", "1Gi")}
+
+			err := k8sClient.Update(ctx, cluster)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cannot be changed"))
 		})
 
 		It("Should reject renaming an additional disk after creation", func(ctx context.Context) {

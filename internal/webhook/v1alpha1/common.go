@@ -121,10 +121,12 @@ func validateAdditionalVolumeClaimTemplates(data *corev1.PersistentVolumeClaimSp
 	return errs
 }
 
-// validateAdditionalVolumeClaimTemplatesChanges ensures that the set of additional disks is fixed.
+// validateAdditionalVolumeClaimTemplatesChanges allows new additional disks to be appended, but
+// keeps the existing ones fixed. Removing a disk would strand the data it holds, so it stays
+// rejected; adding one is reconciled by recreating the StatefulSet, which retains its PVCs.
 func validateAdditionalVolumeClaimTemplatesChanges(oldTemplates, newTemplates []v1.PersistentVolumeClaimTemplate) error {
-	if len(oldTemplates) != len(newTemplates) {
-		return errors.New("additionalVolumeClaimTemplates cannot be added or removed after cluster creation")
+	if len(newTemplates) < len(oldTemplates) {
+		return errors.New("additionalVolumeClaimTemplates cannot be removed after cluster creation")
 	}
 
 	newNames := make(map[string]struct{}, len(newTemplates))
